@@ -138,6 +138,18 @@
     document.body.classList.remove('nav-open');
   }));
 
+  if (!reducedMotion && 'IntersectionObserver' in window) {
+    const revealItems = document.querySelectorAll('.section-head, .about-title, .about-copy, .work-intro, .research-layout h2, .research-column li, .tools-line, .contact-main');
+    const revealObserver = new IntersectionObserver((entries, observer) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add('is-revealed');
+        observer.unobserve(entry.target);
+      });
+    }, { threshold: .12, rootMargin: '0px 0px -7% 0px' });
+    revealItems.forEach((item) => { item.classList.add('reveal-entry'); revealObserver.observe(item); });
+  }
+
   // One shared, scroll-scrubbed timeline powers every project chapter.
   const stories = [...document.querySelectorAll('[data-story]')];
   const storyProgress = document.querySelector('.story-progress');
@@ -153,19 +165,23 @@
     const viewportCenter = innerHeight * .5;
     let nearest = -1;
     let nearestDistance = Infinity;
+    let nearestProgress = 0;
     stories.forEach((story, index) => {
       const stage = story.querySelector('.project-stage');
       const rect = story.getBoundingClientRect();
       const range = Math.max(1, story.offsetHeight - stage.offsetHeight);
       const progress = clamp01(-rect.top / range);
-      const editorialReveal = Math.max(.15, smooth((progress - .015) / .13));
+      const editorialReveal = Math.max(.82, smooth((progress - .015) / .13));
       story.style.setProperty('--editorial-reveal', editorialReveal.toFixed(3));
       const visuals = [...story.querySelectorAll('.story-visual')];
       const segment = 1 / visuals.length;
       visuals.forEach((visual, visualIndex) => {
         const start = visualIndex * segment;
-        const end = visualIndex === visuals.length - 1 ? 1.15 : (visualIndex + 1) * segment;
-        const reveal = Math.min(smooth((progress - start) / .12), 1 - smooth((progress - (end - .12)) / .12));
+        const end = (visualIndex + 1) * segment;
+        const transition = Math.min(.12, segment * .4);
+        const enter = visualIndex === 0 ? 1 : smooth((progress - (start - transition)) / (transition * 2));
+        const leave = visualIndex === visuals.length - 1 ? 1 : 1 - smooth((progress - (end - transition)) / (transition * 2));
+        const reveal = Math.min(enter, leave);
         const opacity = Math.max(0, reveal);
         visual.style.setProperty('--visual-opacity', opacity.toFixed(3));
         visual.style.setProperty('--visual-scale', (1.045 - .045 * progress + .012 * (1 - opacity)).toFixed(3));
@@ -174,7 +190,7 @@
         visual.tabIndex = opacity < .08 ? -1 : 0;
       });
       const distance = Math.abs(rect.top + Math.min(stage.offsetHeight, innerHeight) * .5 - viewportCenter);
-      if (distance < nearestDistance) { nearestDistance = distance; nearest = index; }
+      if (distance < nearestDistance) { nearestDistance = distance; nearest = index; nearestProgress = progress; }
       story.style.setProperty('--story-progress', `${(progress * 100).toFixed(1)}%`);
     });
     const work = document.querySelector('#work');
@@ -183,9 +199,13 @@
     storyProgress.classList.toggle('is-visible', visible);
     if (nearest >= 0 && nearest !== activeStory) {
       activeStory = nearest;
-      storyCurrent.textContent = String(nearest + 1).padStart(2, '0');
-      storyTrack.style.setProperty('--overall-progress', `${((nearest + 1) / stories.length * 100).toFixed(1)}%`);
+      storyProgress.classList.add('is-changing');
+      requestAnimationFrame(() => {
+        storyCurrent.textContent = String(nearest + 1).padStart(2, '0');
+        storyProgress.classList.remove('is-changing');
+      });
     }
+    storyTrack.style.setProperty('--overall-progress', `${((nearest + nearestProgress) / stories.length * 100).toFixed(1)}%`);
   }
   function requestStoryRender() { if (!storyFrame) storyFrame = requestAnimationFrame(renderStories); }
   if (stories.length && !reducedMotion) {
