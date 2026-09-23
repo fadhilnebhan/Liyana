@@ -138,6 +138,68 @@
     document.body.classList.remove('nav-open');
   }));
 
+  // One shared, scroll-scrubbed timeline powers every project chapter.
+  const stories = [...document.querySelectorAll('[data-story]')];
+  const storyProgress = document.querySelector('.story-progress');
+  const storyCurrent = document.querySelector('.story-progress-current');
+  const storyTrack = document.querySelector('.story-progress-track');
+  let storyFrame = 0;
+  let activeStory = -1;
+  const clamp01 = (value) => Math.min(1, Math.max(0, value));
+  const smooth = (value) => { const t = clamp01(value); return t * t * (3 - 2 * t); };
+  function renderStories() {
+    storyFrame = 0;
+    if (!stories.length) return;
+    const viewportCenter = innerHeight * .5;
+    let nearest = -1;
+    let nearestDistance = Infinity;
+    stories.forEach((story, index) => {
+      const stage = story.querySelector('.project-stage');
+      const rect = story.getBoundingClientRect();
+      const range = Math.max(1, story.offsetHeight - stage.offsetHeight);
+      const progress = clamp01(-rect.top / range);
+      const editorialReveal = Math.max(.15, smooth((progress - .015) / .13));
+      story.style.setProperty('--editorial-reveal', editorialReveal.toFixed(3));
+      const visuals = [...story.querySelectorAll('.story-visual')];
+      const segment = 1 / visuals.length;
+      visuals.forEach((visual, visualIndex) => {
+        const start = visualIndex * segment;
+        const end = visualIndex === visuals.length - 1 ? 1.15 : (visualIndex + 1) * segment;
+        const reveal = Math.min(smooth((progress - start) / .12), 1 - smooth((progress - (end - .12)) / .12));
+        const opacity = Math.max(0, reveal);
+        visual.style.setProperty('--visual-opacity', opacity.toFixed(3));
+        visual.style.setProperty('--visual-scale', (1.045 - .045 * progress + .012 * (1 - opacity)).toFixed(3));
+        visual.style.setProperty('--visual-x', `${((visualIndex % 2 ? 1 : -1) * (1 - progress) * 18).toFixed(1)}px`);
+        visual.setAttribute('aria-hidden', opacity < .08 ? 'true' : 'false');
+        visual.tabIndex = opacity < .08 ? -1 : 0;
+      });
+      const distance = Math.abs(rect.top + Math.min(stage.offsetHeight, innerHeight) * .5 - viewportCenter);
+      if (distance < nearestDistance) { nearestDistance = distance; nearest = index; }
+      story.style.setProperty('--story-progress', `${(progress * 100).toFixed(1)}%`);
+    });
+    const work = document.querySelector('#work');
+    const workRect = work.getBoundingClientRect();
+    const visible = workRect.top < innerHeight * .65 && workRect.bottom > innerHeight * .35 && !reducedMotion;
+    storyProgress.classList.toggle('is-visible', visible);
+    if (nearest >= 0 && nearest !== activeStory) {
+      activeStory = nearest;
+      storyCurrent.textContent = String(nearest + 1).padStart(2, '0');
+      storyTrack.style.setProperty('--overall-progress', `${((nearest + 1) / stories.length * 100).toFixed(1)}%`);
+    }
+  }
+  function requestStoryRender() { if (!storyFrame) storyFrame = requestAnimationFrame(renderStories); }
+  if (stories.length && !reducedMotion) {
+    addEventListener('scroll', requestStoryRender, { passive: true });
+    addEventListener('resize', requestStoryRender, { passive: true });
+    requestStoryRender();
+  } else {
+    storyProgress?.remove();
+    stories.forEach((story) => story.querySelectorAll('.story-visual').forEach((visual) => {
+      visual.style.setProperty('--visual-opacity', '1');
+      visual.style.setProperty('--visual-scale', '1');
+    }));
+  }
+
   const galleryData = {
     san: [4, 5, 6, 7, 8, 9], antara: [10, 11, 12], district: [13, 14, 15, 16],
     greencrest: [17, 18, 19], misc: [20, 21, 22], internship: [23, 24, 25]
