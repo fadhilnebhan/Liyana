@@ -6,10 +6,11 @@
   const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const imageCache = new Map();
-  let frame = 1;
   let desiredFrame = 1;
   let raf = 0;
   let lastDpr = 0;
+  let paintVersion = 0;
+  let heroResizeObserver;
 
   function loadFrame(number) {
     if (number < 1 || number > frameCount) return Promise.resolve(null);
@@ -48,25 +49,23 @@
   async function paint() {
     raf = 0;
     resizeCanvas();
-    const image = await loadFrame(frame);
-    if (!image) return;
-    if (frame !== desiredFrame) {
-      frame = desiredFrame;
-      warmFrames(frame);
-      const next = await loadFrame(frame);
-      if (next) draw(next);
-      return;
-    }
+    const requestedFrame = desiredFrame;
+    const version = ++paintVersion;
+    const image = await loadFrame(requestedFrame);
+    if (!image || version !== paintVersion) return;
     draw(image);
+    warmFrames(requestedFrame);
   }
 
   function draw(image) {
     const sw = image.naturalWidth;
     const sh = image.naturalHeight;
     const targetRatio = canvas.width / canvas.height;
-    const cropWidth = Math.min(sw, sh * targetRatio, 1600);
+    const cropWidth = Math.min(sw, sh * targetRatio);
     const cropHeight = Math.min(sh, cropWidth / targetRatio);
-    const focusX = sw * (targetRatio < 1.15 ? 0.34 : 0.48);
+    // The mobile crop is a narrow window through a 16:9 frame. Keep the
+    // portrait centered instead of biasing the crop left as the old code did.
+    const focusX = sw * (targetRatio < 0.9 ? 0.5 : 0.48);
     const sx = Math.max(0, Math.min(sw - cropWidth, focusX - cropWidth / 2));
     const sy = (sh - cropHeight) * 0.42;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -79,7 +78,8 @@
 
   function updateScroll() {
     const bounds = hero.getBoundingClientRect();
-    const travel = Math.max(1, hero.offsetHeight - innerHeight);
+    const viewportHeight = window.visualViewport?.height || innerHeight;
+    const travel = Math.max(1, hero.offsetHeight - viewportHeight);
     const progress = Math.max(0, Math.min(1, -bounds.top / travel));
     if (!reducedMotion) {
       desiredFrame = 1 + Math.round(progress * (frameCount - 1));
@@ -100,12 +100,27 @@
     document.querySelector('.reading-line span').style.width = `${Math.min(100, (scrollY / Math.max(1, document.documentElement.scrollHeight - innerHeight)) * 100)}%`;
   }
 
+  resizeCanvas();
+  const handleViewportChange = () => {
+    resizeCanvas();
+    if (reducedMotion) {
+      requestAnimationFrame(resizeCanvas);
+      return;
+    }
+    queuePaint();
+    updateScroll();
+  };
+  addEventListener('resize', handleViewportChange, { passive: true });
+  addEventListener('orientationchange', handleViewportChange, { passive: true });
+  window.visualViewport?.addEventListener('resize', handleViewportChange, { passive: true });
+  if ('ResizeObserver' in window) {
+    heroResizeObserver = new ResizeObserver(handleViewportChange);
+    heroResizeObserver.observe(document.querySelector('.hero-sticky'));
+  }
   if (!reducedMotion) {
-    loadFrame(1).then((img) => { if (img) draw(img); });
     warmFrames(1);
     loadFrame(frameCount);
     addEventListener('scroll', updateScroll, { passive: true });
-    addEventListener('resize', () => { resizeCanvas(); queuePaint(); updateScroll(); }, { passive: true });
     updateScroll();
   }
 
@@ -129,6 +144,8 @@
   };
   const dialog = document.querySelector('.gallery-dialog');
   const dialogImage = dialog.querySelector('figure img');
+  const dialogFigure = dialog.querySelector('figure');
+  const zoomButton = dialog.querySelector('.gallery-zoom');
   const caption = dialog.querySelector('figcaption');
   const counter = dialog.querySelector('.gallery-count');
   let activeGallery = [];
@@ -137,6 +154,10 @@
     const page = activeGallery[activeIndex];
     dialogImage.src = `./public/images/portfolio-${String(page).padStart(2, '0')}.webp`;
     dialogImage.alt = `Portfolio visual, page ${page}`;
+    dialogFigure.classList.remove('is-zoomed');
+    zoomButton.setAttribute('aria-pressed', 'false');
+    zoomButton.textContent = 'ZOOM +';
+    zoomButton.setAttribute('aria-label', 'Zoom image');
     caption.textContent = `LIYANA PALLIYALI  /  PORTFOLIO PAGE ${String(page).padStart(2, '0')}`;
     counter.textContent = `${String(activeIndex + 1).padStart(2, '0')}  /  ${String(activeGallery.length).padStart(2, '0')}`;
   }
@@ -151,6 +172,13 @@
   dialog.querySelector('.dialog-close').addEventListener('click', () => dialog.close());
   dialog.querySelector('.gallery-prev').addEventListener('click', () => { activeIndex = (activeIndex + activeGallery.length - 1) % activeGallery.length; showImage(); });
   dialog.querySelector('.gallery-next').addEventListener('click', () => { activeIndex = (activeIndex + 1) % activeGallery.length; showImage(); });
+  zoomButton.addEventListener('click', () => {
+    const zoomed = dialogFigure.classList.toggle('is-zoomed');
+    zoomButton.setAttribute('aria-pressed', String(zoomed));
+    zoomButton.textContent = zoomed ? 'FIT' : 'ZOOM +';
+    zoomButton.setAttribute('aria-label', zoomed ? 'Fit image to screen' : 'Zoom image');
+    if (!zoomed) dialogFigure.scrollTo({ left: 0, top: 0, behavior: 'smooth' });
+  });
   dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
   addEventListener('keydown', (event) => {
     if (!dialog.open) return;
